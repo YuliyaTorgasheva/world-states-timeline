@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Визуализация жизни государств — Timeline + D3</title>
+  <style>
+    body { font-family: Inter, system-ui, Arial; margin: 0; padding: 0; }
+    svg { width:100%; height:90vh; display:block; }
+    .tooltip { position: absolute; background: white; border: 1px solid #ddd; padding:8px; border-radius:6px; box-shadow:0 4px 10px rgba(0,0,0,0.08); font-size:13px; }
+    text { font-size: 12px; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <svg id="svg"></svg>
+  <div id="tooltip" class="tooltip" style="display:none"></div>
+
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+// Загрузка CSV с чисткой, без перестановки дат
+d3.csv("states_V7.csv", row => {
+
+
+  const rawStart = String(row.start || "").trim().replace("−", "-");
+  const rawEnd   = String(row.end   || "").trim().replace("−", "-");
+  const start = parseInt(rawStart, 10);
+  const end = parseInt(rawEnd, 10);
+  return {
+  start: isNaN(start) ? null : start,
+  end: isNaN(end) ? null : end,
+  name: (row.source || "").trim(),
+  successor: row.target && row.target.trim() !== "" ? row.target.trim() : null,
+  region: (row.region || "").trim(),  // <== добавляем region
+  _raw: row
+};
+
+}).then(states => {
+  // Фильтрация пустых и некорректных записей
+  states = states.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end)
+  .slice(0, 200);
+        // Создаём цветовую шкалу для регионов
+ const regions = Array.from(new Set(states.map(d => d.region))).filter(r => r != null && r !== "");
+  const color = d3.scaleOrdinal()
+    .domain(regions)
+    .range(regions.map((d,i) => d3.interpolateTurbo(i / (regions.length - 1))));
+
+  console.log('regions',regions);  // Посмотрите, какие регионы получились
+  console.log('color', color);  // Посмотрите, как выглядит цветовая шкала
+
+  // Логирование
+  console.log("Всего записей после фильтрации:", states.length);
+  console.table(states.slice(0, 10));
+  const names = Array.from(new Set(states.map(d => d.name)));
+  console.log("Уникальных стран:", names.length);
+  console.log("Примеры уникальных имён:", names.slice(0, 20));
+  console.log("min/max start,end:", d3.min(states, d => d.start), d3.max(states, d => d.end));
+  const missingDates = states.filter(d => d.start === null || d.end === null);
+  if (missingDates.length) console.warn("Записи без дат:", missingDates.length, missingDates.slice(0,5));
+  const swapped = states.filter(d => d.end < d.start);
+  if (swapped.length) console.warn("Записи с end < start (не меняем порядок):", swapped.length, swapped.slice(0,5));
+
+  // Назначаем уникальные линии для уникальных стран
+  const uniqueNames = Array.from(new Set(states.map(d => d.name)));
+  const nameToLane = new Map();
+  uniqueNames.forEach((name, i) => nameToLane.set(name, i));
+  states.forEach(d => {
+    d.lane = nameToLane.get(d.name);
+  });
+
+  const margin = {top: 20, right: 20, bottom: 40, left: 150};
+  const width = 1600 - margin.left - margin.right;
+  const height = uniqueNames.length * 20;
+
+  const minDate = d3.min(states, d => d.start);
+  const maxDate = d3.max(states, d => d.end);
+
+  const x = d3.scaleLinear()
+    .domain([minDate - 100, maxDate + 100])
+    .range([0, width]);
+
+  const y = d3.scaleLinear()
+    .domain([0, uniqueNames.length])
+    .range([0, height]);
+
+  const svg = d3.select('#svg')
+    .attr('viewBox', `0 0 ${width + margin.left + margin.right} ${height + margin.top + margin.bottom}`)
+    .append('g')
+    .attr('transform', `translate(${margin.left},${margin.top})`);
+
+  // Ось времени
+  const xAxis = d3.axisBottom(x)
+    .tickFormat(d => `${-d} BCE`)
+    .ticks(20);
+
+  svg.append('g')
+    .attr('transform', `translate(0,${height})`)
+    .call(xAxis);
+
+
+
+
+  // Рисуем прямоугольники
+  svg.selectAll('rect')
+    .data(states)
+    .enter()
+    .append('rect')
+    .attr('x', d => x(d.start))
+    .attr('y', d => y(d.lane))
+    .attr('width', d => Math.max(0, x(d.end) - x(d.start)))  // предотвращаем отрицательную ширину
+    .attr('height', 8)
+    .attr('fill', d => color(d.region));  // вот здесь раскраска по региону
+
+  // Находим первую запись (минимальный start) для каждой страны
+  const firstRecords = new Map();
+  states.forEach(d => {
+    if (!firstRecords.has(d.name) || d.start < firstRecords.get(d.name).start) {
+      firstRecords.set(d.name, d);
+    }
+  });
+
+  // Добавляем подписи слева от первого прямоугольника каждой страны
+  svg.selectAll('text.label')
+    .data(Array.from(firstRecords.values()))
+    .enter()
+    .append('text')
+    .attr('class', 'label')
+    .attr('x', d => x(d.start) - 5)
+    .attr('y', d => y(d.lane) + 6)
+    .attr('text-anchor', 'end')
+    .text(d => d.name);
+
+  // Определение стрелки
+  svg.append('defs').append('marker')
+    .attr('id', 'arrow')
+    .attr('viewBox', '0 0 10 10')
+    .attr('refX', 5)
+    .attr('refY', 5)
+    .attr('markerWidth', 6)
+    .attr('markerHeight', 6)
+    .attr('orient', 'auto-start-reverse')
+    .append('path')
+    .attr('d', 'M 0 0 L 10 5 L 0 10 z')
+    .attr('fill', '#555');
+
+  // Вертикальные стрелки преемственности
+  states.forEach(s => {
+    if (s.successor) {
+      const target = states.find(t => t.name === s.successor);
+      if (target && target.start <= s.end) {
+        const xPos = x(s.end);
+        svg.append('line')
+          .attr('x1', xPos)
+          .attr('y1', y(s.lane) + 7.5)
+          .attr('x2', xPos)
+          .attr('y2', y(target.lane) + 7.5)
+          .attr('stroke', '#555')
+          .attr('marker-end', 'url(#arrow)');
+      }
+    }
+  });
+
+}).catch(err => console.error("Ошибка загрузки CSV:", err));
+</script>
+</body>
+</html>
