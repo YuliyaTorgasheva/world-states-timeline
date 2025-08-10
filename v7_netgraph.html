@@ -75,8 +75,9 @@ d3.csv("states_V7.csv", row => {
   const maxDate = d3.max(states, d => d.end);
 
   const x = d3.scaleLinear()
-    .domain([minDate - 100, maxDate + 100])
-    .range([0, width]);
+  .domain([maxDate + 100, minDate - 100]) // раньше было [minDate - 100, maxDate + 100]
+  .range([0, width]);
+
 
   const y = d3.scaleLinear()
     .domain([0, uniqueNames.length])
@@ -89,8 +90,9 @@ d3.csv("states_V7.csv", row => {
 
   // Ось времени
   const xAxis = d3.axisBottom(x)
-    .tickFormat(d => `${-d} BCE`)
-    .ticks(20);
+  .tickFormat(d => d < 0 ? `${-d} BCE` : `${d} CE`)
+  .ticks(20);
+
 
   svg.append('g')
     .attr('transform', `translate(0,${height})`)
