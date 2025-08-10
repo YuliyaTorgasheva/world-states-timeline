@@ -75,8 +75,9 @@ d3.csv("states_V7.csv", row => {
   const maxDate = d3.max(states, d => d.end);
 
   const x = d3.scaleLinear()
-  .domain([maxDate + 100, minDate - 100]) // раньше было [minDate - 100, maxDate + 100]
+  .domain([minDate - 100, maxDate + 100])
   .range([0, width]);
+
 
 
   const y = d3.scaleLinear()
@@ -93,13 +94,9 @@ d3.csv("states_V7.csv", row => {
   .tickFormat(d => d < 0 ? `${-d} BCE` : `${d} CE`)
   .ticks(20);
 
-
   svg.append('g')
     .attr('transform', `translate(0,${height})`)
     .call(xAxis);
-
-
-
 
   // Рисуем прямоугольники
   svg.selectAll('rect')
@@ -108,9 +105,10 @@ d3.csv("states_V7.csv", row => {
     .append('rect')
     .attr('x', d => x(d.start))
     .attr('y', d => y(d.lane))
-    .attr('width', d => Math.max(0, x(d.end) - x(d.start)))  // предотвращаем отрицательную ширину
+    .attr('width', d => Math.max(0, x(d.end) - x(d.start)))
     .attr('height', 8)
     .attr('fill', d => color(d.region));  // вот здесь раскраска по региону
+  
 
   // Находим первую запись (минимальный start) для каждой страны
   const firstRecords = new Map();
