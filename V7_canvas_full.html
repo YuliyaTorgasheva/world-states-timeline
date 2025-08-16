@@ -3,10 +3,32 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Визуализация жизни государств — Timeline + D3 + Canvas</title>
+  <title>Виртуализация Canvas с фиксированной осью времени</title>
   <style>
     body { font-family: Inter, system-ui, Arial; margin: 0; padding: 0; }
-    canvas { display: block; margin: 0 auto; background: white; }
+
+    #container {
+      width: 100%;
+      height: 600px;
+      overflow-y: scroll;
+      border: 1px solid #ccc;
+      position: relative;
+    }
+    #canvasData {
+      display: block;
+      position: absolute;
+      top: 0; left: 0;
+    }
+    #canvasAxis {
+      position: sticky;
+      bottom: 0;
+      background: white;
+      border-top: 1px solid #ccc;
+      display: block;
+      width: 100%;
+      height: 50px;
+      z-index: 10;
+    }
     #tooltip {
       position: absolute; background: white; border: 1px solid #ddd;
       padding:8px; border-radius:6px; box-shadow:0 4px 10px rgba(0,0,0,0.08);
@@ -15,135 +37,218 @@
   </style>
 </head>
 <body>
-  <canvas id="canvas"></canvas>
-  <div id="tooltip"></div>
 
-  <script src="https://d3js.org/d3.v7.min.js"></script>
-  <script>
-  const canvas = document.getElementById('canvas');
-  const ctx = canvas.getContext('2d');
-  const tooltip = document.getElementById('tooltip');
+<div id="container">
+  <canvas id="canvasData"></canvas>
+</div>
+<canvas id="canvasAxis" height="50"></canvas>
+<div id="tooltip"></div>
 
-  // Настройки отступов и размеров
-  const margin = {top: 20, right: 20, bottom: 40, left: 150};
-  const rectHeight = 8;
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<script>
+const container = document.getElementById('container');
+const canvasData = document.getElementById('canvasData');
+const ctxData = canvasData.getContext('2d');
+const canvasAxis = document.getElementById('canvasAxis');
+const ctxAxis = canvasAxis.getContext('2d');
 
-  // Счетчик масштабов сетки максимум
-  const maxWidth = 1600;
-  const maxHeight = 8000; // скорректируем позже
+const margin = {top: 20, right: 20, bottom: 40, left: 150};
+const rectHeight = 8;
+const rowHeight = 20;
 
-  // Загрузка CSV и подготовка данных
-  d3.csv("states_V7.csv", row => {
-    const rawStart = String(row.start || "").trim().replace("−", "-");
-    const rawEnd = String(row.end || "").trim().replace("−", "-");
-    const start = parseInt(rawStart, 10);
-    const end = parseInt(rawEnd, 10);
-    return {
-      start: isNaN(start) ? null : start,
-      end: isNaN(end) ? null : end,
-      name: (row.source || "").trim(),
-      successor: row.target && row.target.trim() !== "" ? row.target.trim() : null,
-      region: (row.region || "").trim(),
-      _raw: row
-    };
-  }).then(states => {
-    // states = states.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end).slice(0, 2000);
-    states = states.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end);
-    const regions = Array.from(new Set(states.map(d => d.region))).filter(r => r != null && r !== "");
-    const color = d3.scaleOrdinal()
-      .domain(regions)
-      .range(regions.map((d,i) => d3.interpolateTurbo(i / (regions.length - 1))));
-    
-    // Назначаем лайны для уникальных стран
-    const uniqueNames = Array.from(new Set(states.map(d => d.name)));
-    const nameToLane = new Map();
-    uniqueNames.forEach((name, i) => nameToLane.set(name, i));
-    states.forEach(d => {
-      d.lane = nameToLane.get(d.name);
-    });
-    
-    const width = maxWidth - margin.left - margin.right;
-    const height = uniqueNames.length * 20;
-    canvas.width = width + margin.left + margin.right;
-    canvas.height = height + margin.top + margin.bottom;
+let states = [];
+let uniqueNames = [];
+let nameToLane = new Map();
+let color;
+let x, y;
+let minDate, maxDate;
 
-    // Масштабы
-    const minDate = d3.min(states, d => d.start);
-    const maxDate = d3.max(states, d => d.end);
+let width = 1600;
+let height = 0;
 
-    const x = d3.scaleLinear()
-      .domain([minDate - 100, maxDate + 100])
-      .range([0, width]);
+const viewHeight = container.clientHeight;
+const buffer = 20;
 
-    const y = d3.scaleLinear()
-      .domain([0, uniqueNames.length])
-      .range([0, height]);
+function resizeCanvasData() {
+  canvasData.style.width = width + margin.left + margin.right + 'px';
+  canvasData.style.height = height + margin.top + margin.bottom + 'px';
 
-    // Функция отрисовки всего
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.font = "12px Arial";
+  const dpr = window.devicePixelRatio || 1;
+  canvasData.width = (width + margin.left + margin.right) * dpr;
+  canvasData.height = (height + margin.top + margin.bottom) * dpr;
+  ctxData.setTransform(1, 0, 0, 1, 0, 0);
+  ctxData.scale(dpr, dpr);
+}
 
-      // Отрисовка прямоугольников
-      states.forEach(d => {
-        ctx.fillStyle = color(d.region);
-        const rectX = margin.left + x(d.start);
-        const rectY = margin.top + y(d.lane);
-        const rectW = Math.max(0, x(d.end) - x(d.start));
-        ctx.fillRect(rectX, rectY, rectW, rectHeight);
-      });
+function resizeCanvasAxis() {
+  canvasAxis.style.width = (width + margin.left + margin.right) + 'px';
+  canvasAxis.width = (width + margin.left + margin.right) * (window.devicePixelRatio || 1);
+  canvasAxis.height = 50 * (window.devicePixelRatio || 1);
+  ctxAxis.setTransform(1, 0, 0, 1, 0, 0);
+  ctxAxis.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+}
 
-      // Отрисовка подписей (у первой записи страны)
-      const firstRecords = new Map();
-      states.forEach(d => {
-        if (!firstRecords.has(d.name) || d.start < firstRecords.get(d.name).start) {
-          firstRecords.set(d.name, d);
-        }
-      });
-      ctx.fillStyle = "black";
-      ctx.textAlign = "right";
-      ctx.textBaseline = "middle";
-      firstRecords.forEach(d => {
-        const xText = margin.left + x(d.start) - 5;
-        const yText = margin.top + y(d.lane) + rectHeight / 2;
-        ctx.fillText(d.name, xText, yText);
-      });
+let nameMap = new Map();
 
-      // Отрисовка стрелок преемственности
-      ctx.strokeStyle = '#555';
-      ctx.fillStyle = '#555';
-      ctx.lineWidth = 1.5;
-      states.forEach(s => {
-        if (s.successor) {
-          const target = states.find(t => t.name === s.successor);
-          if (target && target.start <= s.end) {
-            const xPos = margin.left + x(s.end);
-            const y1 = margin.top + y(s.lane) + rectHeight / 2;
-            const y2 = margin.top + y(target.lane) + rectHeight / 2;
-            // линия
-            ctx.beginPath();
-            ctx.moveTo(xPos, y1);
-            ctx.lineTo(xPos, y2);
-            ctx.stroke();
-            // стрелка (треугольник)
-            const arrowSize = 6;
-            ctx.beginPath();
-            ctx.moveTo(xPos, y2);
-            ctx.lineTo(xPos - arrowSize, y2 - arrowSize / 2);
-            ctx.lineTo(xPos - arrowSize, y2 + arrowSize / 2);
-            ctx.closePath();
-            ctx.fill();
-          }
-        }
-      });
-    }
+function drawAxis() {
+  ctxAxis.clearRect(0, 0, canvasAxis.width, canvasAxis.height);
 
-    draw();
+  const axisHeight = 30;
+  const axisY = 10;
 
-    // Можно добавить обработку событий мыши и тултип при необходимости
-  }).catch(err => {
-    console.error("Ошибка загрузки CSV:", err);
+  ctxAxis.strokeStyle = 'black';
+  ctxAxis.fillStyle = 'black';
+  ctxAxis.lineWidth = 1;
+
+  // линия оси
+  ctxAxis.beginPath();
+  ctxAxis.moveTo(margin.left, axisY);
+  ctxAxis.lineTo(margin.left + width, axisY);
+  ctxAxis.stroke();
+
+  // деления и подписи
+  const ticks = x.ticks(10);
+  const formatTick = x.tickFormat(10);
+
+  ctxAxis.font = '12px Arial';
+  ctxAxis.textAlign = 'center';
+  ctxAxis.textBaseline = 'top';
+
+  ticks.forEach(t => {
+    const xPos = margin.left + x(t);
+    // штриховка
+    ctxAxis.beginPath();
+    ctxAxis.moveTo(xPos, axisY);
+    ctxAxis.lineTo(xPos, axisY + 6);
+    ctxAxis.stroke();
+    // подпись
+    const text = formatTick(t);
+    ctxAxis.fillText(text, xPos, axisY + 8);
   });
-  </script>
+}
+
+function drawData() {
+  const scrollTop = container.scrollTop;
+  const firstVisible = Math.max(0, Math.floor((scrollTop - margin.top) / rowHeight) - buffer);
+  const lastVisible = Math.min(uniqueNames.length, Math.ceil((scrollTop + viewHeight - margin.top) / rowHeight) + buffer);
+
+  ctxData.clearRect(0, 0, canvasData.width, canvasData.height);
+
+  ctxData.font = "12px Arial";
+  ctxData.textAlign = "right";
+  ctxData.textBaseline = "middle";
+
+  for(let laneIdx = firstVisible; laneIdx < lastVisible; laneIdx++) {
+    const laneStates = states.filter(d => d.lane === laneIdx);
+
+    laneStates.forEach(d => {
+      ctxData.fillStyle = color(d.region);
+      const rectX = margin.left + x(d.start);
+      const rectY = margin.top + y(d.lane);
+      const rectW = Math.max(0, x(d.end) - x(d.start));
+      if (rectY + rectHeight < scrollTop || rectY > scrollTop + viewHeight) return;
+      ctxData.fillRect(rectX, rectY, rectW, rectHeight);
+    });
+
+    const firstRecord = states.find(d => d.lane === laneIdx && !states.some(s => s.lane === laneIdx && s.start < d.start));
+    if (firstRecord) {
+      const xText = margin.left + x(firstRecord.start) - 5;
+      const yText = margin.top + y(laneIdx) + rectHeight / 2;
+      ctxData.fillStyle = "black";
+      ctxData.fillText(firstRecord.name, xText, yText);
+    }
+  }
+
+  ctxData.strokeStyle = '#555';
+  ctxData.fillStyle = '#555';
+  ctxData.lineWidth = 1.5;
+  for(let laneIdx = firstVisible; laneIdx < lastVisible; laneIdx++) {
+    const laneStates = states.filter(d => d.lane === laneIdx);
+    laneStates.forEach(s => {
+      if (s.successor) {
+        const target = nameMap.get(s.successor);
+        if (target && target.start <= s.end) {
+          if (target.lane < firstVisible || target.lane >= lastVisible) return;
+
+          const xPos = margin.left + x(s.end);
+          const y1 = margin.top + y(s.lane) + rectHeight / 2;
+          const y2 = margin.top + y(target.lane) + rectHeight / 2;
+          ctxData.beginPath();
+          ctxData.moveTo(xPos, y1);
+          ctxData.lineTo(xPos, y2);
+          ctxData.stroke();
+          const arrowSize = 6;
+          ctxData.beginPath();
+          ctxData.moveTo(xPos, y2);
+          ctxData.lineTo(xPos - arrowSize, y2 - arrowSize / 2);
+          ctxData.lineTo(xPos - arrowSize, y2 + arrowSize / 2);
+          ctxData.closePath();
+          ctxData.fill();
+        }
+      }
+    });
+  }
+}
+
+d3.csv("states_V7.csv", row => {
+  const rawStart = String(row.start || "").trim().replace("−", "-");
+  const rawEnd = String(row.end || "").trim().replace("−", "-");
+  const start = parseInt(rawStart, 10);
+  const end = parseInt(rawEnd, 10);
+  return {
+    start: isNaN(start) ? null : start,
+    end: isNaN(end) ? null : end,
+    name: (row.source || "").trim(),
+    successor: row.target && row.target.trim() !== "" ? row.target.trim() : null,
+    region: (row.region || "").trim(),
+    _raw: row
+  };
+}).then(data => {
+  states = data.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end);
+
+  uniqueNames = Array.from(new Set(states.map(d => d.name)));
+  uniqueNames.forEach((name, i) => nameToLane.set(name, i));
+  states.forEach(d => { d.lane = nameToLane.get(d.name); });
+
+  nameMap = new Map(states.map(d => [d.name, d]));
+
+  const regions = Array.from(new Set(states.map(d => d.region))).filter(r => r != null && r !== "");
+  color = d3.scaleOrdinal()
+    .domain(regions)
+    .range(regions.map((d,i) => d3.interpolateTurbo(i / (regions.length - 1))));
+
+  width = 1600 - margin.left - margin.right;
+  height = uniqueNames.length * rowHeight;
+
+  resizeCanvasData();
+  resizeCanvasAxis();
+
+  minDate = d3.min(states, d => d.start);
+  maxDate = d3.max(states, d => d.end);
+
+  x = d3.scaleLinear()
+    .domain([minDate - 100, maxDate + 100])
+    .range([0, width]);
+
+  y = d3.scaleLinear()
+    .domain([0, uniqueNames.length])
+    .range([0, height]);
+
+  drawAxis();
+  drawData();
+});
+
+container.addEventListener('scroll', () => {
+  drawData();
+});
+
+window.addEventListener('resize', () => {
+  resizeCanvasData();
+  resizeCanvasAxis();
+  drawAxis();
+  drawData();
+});
+</script>
+
 </body>
 </html>
