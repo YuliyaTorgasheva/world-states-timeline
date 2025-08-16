@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Визуализация жизни государств — Timeline + D3 + Canvas</title>
+  <style>
+    body { font-family: Inter, system-ui, Arial; margin: 0; padding: 0; }
+    canvas { display: block; margin: 0 auto; background: white; }
+    #tooltip {
+      position: absolute; background: white; border: 1px solid #ddd;
+      padding:8px; border-radius:6px; box-shadow:0 4px 10px rgba(0,0,0,0.08);
+      font-size:13px; pointer-events: none; display: none;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+  <div id="tooltip"></div>
+
+  <script src="https://d3js.org/d3.v7.min.js"></script>
+  <script>
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const tooltip = document.getElementById('tooltip');
+
+  // Настройки отступов и размеров
+  const margin = {top: 20, right: 20, bottom: 40, left: 150};
+  const rectHeight = 8;
+
+  // Счетчик масштабов сетки максимум
+  const maxWidth = 1600;
+  const maxHeight = 8000; // скорректируем позже
+
+  // Загрузка CSV и подготовка данных
+  d3.csv("states_V7.csv", row => {
+    const rawStart = String(row.start || "").trim().replace("−", "-");
+    const rawEnd = String(row.end || "").trim().replace("−", "-");
+    const start = parseInt(rawStart, 10);
+    const end = parseInt(rawEnd, 10);
+    return {
+      start: isNaN(start) ? null : start,
+      end: isNaN(end) ? null : end,
+      name: (row.source || "").trim(),
+      successor: row.target && row.target.trim() !== "" ? row.target.trim() : null,
+      region: (row.region || "").trim(),
+      _raw: row
+    };
+  }).then(states => {
+    states = states.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end).slice(0, 2000);
+    
+    const regions = Array.from(new Set(states.map(d => d.region))).filter(r => r != null && r !== "");
+    const color = d3.scaleOrdinal()
+      .domain(regions)
+      .range(regions.map((d,i) => d3.interpolateTurbo(i / (regions.length - 1))));
+    
+    // Назначаем лайны для уникальных стран
+    const uniqueNames = Array.from(new Set(states.map(d => d.name)));
+    const nameToLane = new Map();
+    uniqueNames.forEach((name, i) => nameToLane.set(name, i));
+    states.forEach(d => {
+      d.lane = nameToLane.get(d.name);
+    });
+    
+    const width = maxWidth - margin.left - margin.right;
+    const height = uniqueNames.length * 20;
+    canvas.width = width + margin.left + margin.right;
+    canvas.height = height + margin.top + margin.bottom;
+
+    // Масштабы
+    const minDate = d3.min(states, d => d.start);
+    const maxDate = d3.max(states, d => d.end);
+
+    const x = d3.scaleLinear()
+      .domain([minDate - 100, maxDate + 100])
+      .range([0, width]);
+
+    const y = d3.scaleLinear()
+      .domain([0, uniqueNames.length])
+      .range([0, height]);
+
+    // Функция отрисовки всего
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.font = "12px Arial";
+
+      // Отрисовка прямоугольников
+      states.forEach(d => {
+        ctx.fillStyle = color(d.region);
+        const rectX = margin.left + x(d.start);
+        const rectY = margin.top + y(d.lane);
+        const rectW = Math.max(0, x(d.end) - x(d.start));
+        ctx.fillRect(rectX, rectY, rectW, rectHeight);
+      });
+
+      // Отрисовка подписей (у первой записи страны)
+      const firstRecords = new Map();
+      states.forEach(d => {
+        if (!firstRecords.has(d.name) || d.start < firstRecords.get(d.name).start) {
+          firstRecords.set(d.name, d);
+        }
+      });
+      ctx.fillStyle = "black";
+      ctx.textAlign = "right";
+      ctx.textBaseline = "middle";
+      firstRecords.forEach(d => {
+        const xText = margin.left + x(d.start) - 5;
+        const yText = margin.top + y(d.lane) + rectHeight / 2;
+        ctx.fillText(d.name, xText, yText);
+      });
+
+      // Отрисовка стрелок преемственности
+      ctx.strokeStyle = '#555';
+      ctx.fillStyle = '#555';
+      ctx.lineWidth = 1.5;
+      states.forEach(s => {
+        if (s.successor) {
+          const target = states.find(t => t.name === s.successor);
+          if (target && target.start <= s.end) {
+            const xPos = margin.left + x(s.end);
+            const y1 = margin.top + y(s.lane) + rectHeight / 2;
+            const y2 = margin.top + y(target.lane) + rectHeight / 2;
+            // линия
+            ctx.beginPath();
+            ctx.moveTo(xPos, y1);
+            ctx.lineTo(xPos, y2);
+            ctx.stroke();
+            // стрелка (треугольник)
+            const arrowSize = 6;
+            ctx.beginPath();
+            ctx.moveTo(xPos, y2);
+            ctx.lineTo(xPos - arrowSize, y2 - arrowSize / 2);
+            ctx.lineTo(xPos - arrowSize, y2 + arrowSize / 2);
+            ctx.closePath();
+            ctx.fill();
+          }
+        }
+      });
+    }
+
+    draw();
+
+    // Можно добавить обработку событий мыши и тултип при необходимости
+  }).catch(err => {
+    console.error("Ошибка загрузки CSV:", err);
+  });
+  </script>
+</body>
+</html>
