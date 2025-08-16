@@ -47,8 +47,8 @@
       _raw: row
     };
   }).then(states => {
-    states = states.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end).slice(0, 2000);
-    
+    // states = states.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end).slice(0, 2000);
+    states = states.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end);
     const regions = Array.from(new Set(states.map(d => d.region))).filter(r => r != null && r !== "");
     const color = d3.scaleOrdinal()
       .domain(regions)
