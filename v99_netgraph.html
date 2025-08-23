@@ -54,6 +54,8 @@ document.getElementById('rowCountSelect').addEventListener('change', function() 
 loadDataAndVisualize(2000);
 
 function visualize(statesData) {
+    statesData = statesData.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end);
+
   const svg = d3.select("svg")
   .attr("width", 2400)  // увеличить ширину
   .attr("height", 2400); // увеличить высоту
