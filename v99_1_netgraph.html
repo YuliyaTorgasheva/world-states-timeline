@@ -2,11 +2,11 @@
 <html lang="ru">
 <head>
 <meta charset="utf-8" />
-<title>Граф преемственности с выбором количества строк и региона - D3.js</title>
+<title>Граф преемственности с автоматической высотой холста - D3.js</title>
 <script src="https://d3js.org/d3.v7.min.js"></script>
 <style>
   body { font-family: Inter, system-ui, Arial; margin: 0; padding: 20px; background: #fff; }
-  svg { width: 100%; height: 900px; border: 1px solid #ccc; }
+  svg { width: 100%; border: 1px solid #ccc; }
   .node rect { stroke: #777; stroke-width: 1.5px; cursor: pointer; }
   .node text { font-size: 11px; pointer-events: none; user-select: none; }
   .link { fill: none; stroke: #555; stroke-opacity: 0.6; stroke-width: 1.5px; marker-end: url(#arrow); }
@@ -44,7 +44,6 @@ d3.csv("states_V7.csv", d3.autoType).then(data => {
   data.forEach(d => {
     if (!d.successor) d.successor = null;
   });
-  // Фильтруем валидные записи
   allStatesData = data.filter(d => d.name && d.start !== null && d.end !== null && d.start <= d.end);
 
   // Заполняем список уникальных регионов
@@ -54,7 +53,6 @@ d3.csv("states_V7.csv", d3.autoType).then(data => {
     regionSelect.append("option").attr("value", region).text(region);
   });
 
-  // Первичная отрисовка
   updateVisualization();
 });
 
@@ -82,14 +80,14 @@ function visualize(statesData) {
 
   const margin = {top: 70, right: 50, bottom: 90, left: 150};
   const width = svg.node().clientWidth - margin.left - margin.right;
-  // const height = svg.node().clientHeight - margin.top - margin.bottom;
-  const height = svg.node().clientHeight + 1000 - margin.top - margin.bottom;
-  const rectHeight = 8; // Можно уменьшить для компактности
 
-  const regions = Array.from(new Set(statesData.map(d => d.region)));
+  const rectHeight = 8;
+  const verticalSpacing = 5; // Отступ между прямоугольниками
+  const laneHeight = rectHeight + verticalSpacing;
+
+  // Формируем laneMap и считаем количество lane
   const laneMap = new Map();
   let laneCounter = 0;
-
   statesData.forEach(d => {
     let laneKey = d.region + ":" + d.name;
     if(!laneMap.has(laneKey)) {
@@ -97,6 +95,39 @@ function visualize(statesData) {
     }
     d.lane = laneMap.get(laneKey);
   });
+
+  // Высота svg зависит от количества lane
+  const height = laneCounter * laneHeight + margin.top + margin.bottom;
+  svg.attr("height", height);
+
+  const regions = Array.from(new Set(statesData.map(d => d.region)));
+
+  const yScale = d3.scaleLinear()
+    .domain([0, laneCounter])
+    .range([margin.top, margin.top + laneCounter * laneHeight]);
+
+  const minDate = d3.min(statesData, d => d.start);
+  const maxDate = d3.max(statesData, d => d.end);
+
+  const xScale = d3.scaleLinear()
+    .domain([minDate - 10, maxDate + 10])
+    .range([margin.left, margin.left + width]);
+
+  const color = d3.scaleOrdinal()
+    .domain(regions)
+    .range(regions.map((d,i) => d3.interpolateTurbo(i/(regions.length - 1))));
+
+  svg.append("defs").append("marker")
+    .attr("id", "arrow")
+    .attr("viewBox", "0 -5 10 10")
+    .attr("refX", 9)
+    .attr("refY", 0)
+    .attr("markerWidth", 6)
+    .attr("markerHeight", 6)
+    .attr("orient", "auto")
+    .append("path")
+    .attr("d", "M0,-5L10,0L0,5")
+    .attr("fill", "#555");
 
   const nodes = statesData.map(d => ({
     id: d.name + "_" + d.start,
@@ -122,33 +153,6 @@ function visualize(statesData) {
     l.source = nodes.find(n => n.id === l.source);
     l.target = nodes.find(n => n.id === l.target);
   });
-
-  const minDate = d3.min(statesData, d => d.start);
-  const maxDate = d3.max(statesData, d => d.end);
-
-  const xScale = d3.scaleLinear()
-    .domain([minDate - 10, maxDate + 10])
-    .range([margin.left, margin.left + width]);
-
-  const yScale = d3.scaleLinear()
-    .domain([0, laneCounter])
-    .range([margin.top, margin.top + height]);
-
-  const color = d3.scaleOrdinal()
-    .domain(regions)
-    .range(regions.map((d,i) => d3.interpolateTurbo(i/(regions.length - 1))));
-
-  svg.append("defs").append("marker")
-    .attr("id", "arrow")
-    .attr("viewBox", "0 -5 10 10")
-    .attr("refX", 9)
-    .attr("refY", 0)
-    .attr("markerWidth", 6)
-    .attr("markerHeight", 6)
-    .attr("orient", "auto")
-    .append("path")
-    .attr("d", "M0,-5L10,0L0,5")
-    .attr("fill", "#555");
 
   const link = svg.selectAll(".link")
     .data(links)
@@ -178,24 +182,11 @@ function visualize(statesData) {
 
   const tooltip = d3.select("#tooltip");
   nodeGroup.on("mousemove", (event, d) => {
-  // Найдем объект наследника по имени
-  const successorName = d.successor;
-  let successorDisplay = "Отсутствует";
-  if (successorName) {
-    const successorObj = statesData.find(item => item.name === successorName);
-    if (successorObj) {
-      successorDisplay = successorObj.name;
-    } else {
-      successorDisplay = successorName + " (не найден)";
-    }
-  }
-
-  tooltip.style("visibility", "visible")
-    .html(`<b>${d.name}</b><br>Регион: ${d.region}<br>Период: ${d.start} - ${d.end}<br>Наследник: ${successorDisplay}`)
-    .style("top", (event.pageY + 15) + "px")
-    .style("left", (event.pageX + 15) + "px");
-});
-
+    tooltip.style("visibility", "visible")
+      .html(`<b>${d.name}</b><br>Регион: ${d.region}<br>Период: ${d.start} - ${d.end}`)
+      .style("top", (event.pageY + 15) + "px")
+      .style("left", (event.pageX + 15) + "px");
+  });
   nodeGroup.on("mouseout", () => tooltip.style("visibility", "hidden"));
 
   const simulation = d3.forceSimulation(nodes)
@@ -212,7 +203,6 @@ function visualize(statesData) {
       .attr("y2", d => d.target.y + rectHeight/2);
 
     nodeGroup.attr("transform", d => {
-      // Ограничение позиций, чтобы не выходили за пределы
       d.x = Math.max(margin.left + (xScale(d.end) - xScale(d.start))/2, Math.min(d.x, margin.left + width - (xScale(d.end) - xScale(d.start))/2));
       d.y = Math.max(margin.top + rectHeight/2, Math.min(d.y, margin.top + height - rectHeight/2));
       return `translate(${d.x - (xScale(d.end) - xScale(d.start))/2},${d.y - rectHeight/2})`;
