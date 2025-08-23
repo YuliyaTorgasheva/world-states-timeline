@@ -33,7 +33,7 @@
 let allStatesData = [];
 
 function loadDataAndVisualize(limit) {
-  d3.csv("states_v7.csv", d3.autoType).then(statesData => {
+  d3.csv("states_V7.csv", d3.autoType).then(statesData => {
     statesData.forEach(d => {
       if (!d.successor) d.successor = null;
     });
