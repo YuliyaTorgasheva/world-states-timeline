@@ -1,0 +1,212 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8" />
+<title>Граф преемственности государств с преемниками - D3.js</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+  body { font-family: Inter, system-ui, Arial; margin: 0; padding: 20px; background: #fff; }
+  svg { width: 100%; height: 900px; border: 1px solid #ccc; }
+  .node rect {
+    stroke: #777;
+    stroke-width: 1.5px;
+    cursor: pointer;
+  }
+  .node text {
+    font-size: 11px;
+    pointer-events: none;
+    user-select: none;
+  }
+  .link {
+    fill: none;
+    stroke: #555;
+    stroke-opacity: 0.6;
+    stroke-width: 1.5px;
+    marker-end: url(#arrow);
+  }
+  .tooltip {
+    position: absolute;
+    background: white;
+    border: 1px solid #ddd;
+    padding: 6px 8px;
+    border-radius: 6px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    font-size: 12px;
+    pointer-events: none;
+    visibility: hidden;
+  }
+</style>
+</head>
+<body>
+<svg></svg>
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+
+const statesData = [
+  {name:"Терская советская республика",successor:"Северо-Кавказская республика",start:1918,end:1919,region:"БЕ"},
+  {name:"У",successor:"Китай",start:222,end:280,region:"АО"},
+  {name:"Пасхи остров (Рапануи)",successor:"Чили",start:400,end:1888,region:"АО"},
+  {name:"Тонга",successor:null,start:800,end:2025,region:"АО"},
+  {name:"У",successor:"Китай",start:892,end:937,region:"АО"},
+  {name:"Яп",successor:null,start:950,end:1600,region:"АО"},
+  {name:"Кауаи",successor:"Гавайское королевство",start:1050,end:1806,region:"АО"},
+  {name:"Мауи",successor:"Гавайское королевство",start:1050,end:1794,region:"АО"},
+  {name:"Оаху",successor:"Кауаи",start:1050,end:1783,region:"АО"},
+  {name:"Гавайи",successor:null,start:1100,end:1520,region:"АО"},
+  {name:"Гавайское королевство",successor:null,start:1529,end:1950,region:"АО"},
+];
+// Выделяем регионы, назначаем lane
+const regions = Array.from(new Set(statesData.map(d => d.region)));
+const laneMap = new Map();
+let laneCounter = 0;
+const nameToLane = new Map();
+
+statesData.forEach(d => {
+  let laneKey = d.region + ":" + d.name;
+  if(!laneMap.has(laneKey)) {
+    laneMap.set(laneKey, laneCounter);
+    laneCounter++;
+  }
+  d.lane = laneMap.get(laneKey);
+  nameToLane.set(d.name, d.lane);
+});
+
+// Формируем nodes
+const nodes = statesData.map(d => ({
+  id: d.name + "_" + d.start,
+  name: d.name,
+  start: d.start,
+  end: d.end,
+  lane: d.lane,
+  region: d.region,
+  successor: d.successor
+}));
+
+// Формируем links по successor
+const links = [];
+nodes.forEach(n => {
+  if(n.successor) {
+    const succNode = nodes.find(x => x.name === n.successor);
+    if(succNode) {
+      links.push({source: n.id, target: succNode.id});
+    }
+  }
+});
+
+const svg = d3.select("svg");
+const margin = {top: 70, right: 50, bottom: 90, left: 150};
+const width = svg.node().clientWidth - margin.left - margin.right;
+const height = svg.node().clientHeight - margin.top - margin.bottom;
+const rectHeight = 12;
+
+const minDate = d3.min(statesData, d => d.start);
+const maxDate = d3.max(statesData, d => d.end);
+
+const xScale = d3.scaleLinear()
+  .domain([minDate - 10, maxDate + 10])
+  .range([margin.left, margin.left + width]);
+
+const yScale = d3.scaleLinear()
+  .domain([0, laneCounter])
+  .range([margin.top, margin.top + height]);
+
+const color = d3.scaleOrdinal()
+  .domain(regions)
+  .range(regions.map((d,i) => d3.interpolateTurbo(i / (regions.length - 1))));
+
+// Стрелка для связей
+svg.append("defs").append("marker")
+  .attr("id", "arrow")
+  .attr("viewBox", "0 -5 10 10")
+  .attr("refX", 9)
+  .attr("refY", 0)
+  .attr("markerWidth", 6)
+  .attr("markerHeight", 6)
+  .attr("orient", "auto")
+  .append("path")
+  .attr("d", "M0,-5L10,0L0,5")
+  .attr("fill", "#555");
+
+// Создаем линии связей
+const link = svg.selectAll(".link")
+  .data(links)
+  .join("line")
+  .attr("class", "link")
+  .attr("stroke", "#555")
+  .attr("stroke-width", 1.5)
+  .attr("marker-end", "url(#arrow)");
+
+// Создаем группы узлов
+const nodeGroup = svg.selectAll("g.node")
+  .data(nodes)
+  .join("g")
+  .attr("class", "node");
+
+// Добавляем прямоугольники
+nodeGroup.append("rect")
+  .attr("width", d => Math.max(1, xScale(d.end) - xScale(d.start)))
+  .attr("height", rectHeight)
+  .attr("fill", d => color(d.region))
+  .attr("stroke", "#777");
+
+// Добавляем текст названия
+nodeGroup.append("text")
+  .attr("x", -6)
+  .attr("y", rectHeight / 2)
+  .attr("dy", "0.35em")
+  .attr("text-anchor", "end")
+  .text(d => d.name.length > 15 ? d.name.slice(0,14) + "…" : d.name);
+
+// Тултип
+const tooltip = d3.select("#tooltip");
+nodeGroup.on("mousemove", (event, d) => {
+  tooltip.style("visibility", "visible")
+         .html(`<b>${d.name}</b><br>Регион: ${d.region}<br>Период: ${d.start} - ${d.end}`)
+         .style("top", (event.pageY + 15) + "px")
+         .style("left", (event.pageX + 15) + "px");
+});
+nodeGroup.on("mouseout", () => {
+  tooltip.style("visibility", "hidden");
+});
+
+// Запускаем симуляцию
+// Запускаем симуляцию
+const simulation = d3.forceSimulation(nodes)
+  .force("link", d3.forceLink(links).id(d => d.id).distance(40).strength(1))
+  .force("x", d3.forceX(d => xScale(d.start + (d.end - d.start) / 2)).strength(1))
+  .force("y", d3.forceY(d => yScale(d.lane) + rectHeight / 2).strength(1))
+  .force("collide", d3.forceCollide(rectHeight * 1.2).iterations(2));
+
+// Обновляем позиции и линии при каждом тике
+simulation.on("tick", () => {
+  link
+    // X координата начала и конца линии устанволена на конец прямоугольника источника
+    .attr("x1", d => d.source.x + (xScale(d.source.end) - xScale(d.source.start)) / 2)
+    .attr("y1", d => d.source.y + rectHeight / 2)  // Нижняя точка источника
+    .attr("x2", d => d.source.x + (xScale(d.source.end) - xScale(d.source.start)) / 2)
+    .attr("y2", d => d.target.y + rectHeight / 2); // Вертикальная линия к вертикальной координате приемника
+
+  nodeGroup
+    .attr("transform", d =>
+      `translate(${d.x - (xScale(d.end) - xScale(d.start)) / 2},${d.y - rectHeight / 2})`
+    );
+});
+
+
+// Обозначения оси времени
+const xAxis = d3.axisBottom(xScale).ticks(10).tickFormat(d3.format("d"));
+svg.append("g")
+  .attr("transform", `translate(0,${margin.top + height + 20})`)
+  .call(xAxis);
+
+svg.append("text")
+  .attr("x", width / 2 + margin.left)
+  .attr("y", margin.top + height + 55)
+  .attr("text-anchor", "middle")
+  .attr("font-size", "14px")
+  .text("Время (год)");
+
+</script>
+</body>
+</html>
