@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Граф Британской империи — выбор раскладки</title>
+<script src="https://d3js.org/d3.v7.min.js"></script>
+<style>
+body { font-family: sans-serif; }
+.link { stroke: #999; stroke-opacity: 0.7; stroke-width: 2px; }
+.node circle { stroke: #333; stroke-width: 1.5px; }
+.label { font-size: 12px; fill: #333; }
+.axis line, .axis path { stroke: #aaa; }
+.tooltip {
+  position: absolute;
+  background: #fff;
+  border: 1px solid #999;
+  padding: 6px;
+  border-radius: 5px;
+  pointer-events: none;
+  font-size: 12px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+}
+#menu { margin: 10px; }
+</style>
+</head>
+<body>
+<div id="menu">
+  Раскладка: 
+  <select id="layoutSelect">
+    <option value="force">Force-directed</option>
+    <option value="tree">Дерево</option>
+    <option value="forceY">Force с фиксированными рядами</option>
+  </select>
+</div>
+<svg width="1200" height="700"></svg>
+<div id="tooltip" class="tooltip" style="display:none;"></div>
+
+<script>
+const svg = d3.select("svg"),
+      width = +svg.attr("width"),
+      height = +svg.attr("height"),
+      margin = {top:40, right:40, bottom:40, left:100};
+
+const tooltip = d3.select("#tooltip");
+
+Promise.all([
+  d3.csv("nodes.csv", d=>({id:d.id,label:d.label,year:+d.year,country:d.country,type:d.type})),
+  d3.csv("edges.csv", d=>({source:d.source,target:d.target,relation:d.relation}))
+]).then(([nodes, links]) => {
+
+  const years = nodes.map(d=>d.year);
+  const xScale = d3.scaleLinear()
+                   .domain([d3.min(years)-10, d3.max(years)+10])
+                   .range([margin.left, width-margin.right]);
+
+  const yCenter = height/2;
+
+  const nodeById = new Map(nodes.map(d=>[d.id,d]));
+  links.forEach(l => { l.source = nodeById.get(l.source); l.target = nodeById.get(l.target); });
+
+  const layoutSelect = d3.select("#layoutSelect");
+  layoutSelect.on("change", updateLayout);
+
+  function linkDistance(d) {
+    if(d.relation === "continuation") return 50;   // основной ствол
+    if(d.relation === "separation" || d.relation === "annexation") return 0; // нулевая длина
+    if(d.relation === "dominion") return 30;       // промежуточные
+    return 80;                                     // по умолчанию
+  }
+
+  function updateLayout() {
+    const layout = layoutSelect.property("value");
+
+    svg.selectAll("*").remove(); // очищаем граф
+
+    // ось времени
+    svg.append("g")
+       .attr("class","axis")
+       .attr("transform",`translate(0,${height-margin.bottom})`)
+       .call(d3.axisBottom(xScale).tickFormat(d3.format("d")));
+
+    if(layout==="force") {
+        // фиксируем положение для separation/annexation
+        links.forEach(l=>{
+          if(l.relation==="separation" || l.relation==="annexation"){
+            l.target.x = xScale(l.source.year);
+            l.target.y = yCenter + (l.relation==="separation" ? -60 : 60);
+          }
+        });
+
+        const simulation = d3.forceSimulation(nodes)
+            .force("link", d3.forceLink(links).id(d=>d.id).distance(linkDistance))
+            .force("x", d3.forceX(d=>xScale(d.year)).strength(1))
+            .force("y", d3.forceY(d=> {
+                if(d.country==="Великобритания") return yCenter;
+                return d.y || yCenter;
+            }).strength(1))
+            .force("collide", d3.forceCollide(15))
+            .stop();
+        for(let i=0;i<300;i++) simulation.tick();
+        drawGraph(nodes, links);
+    } else if(layout==="tree") {
+        const root = d3.stratify()
+                       .id(d=>d.id)
+                       .parentId(d=>{
+                           const inEdge = links.find(l => l.target.id===d.id && l.relation!=="continuation");
+                           return inEdge ? inEdge.source.id : null;
+                       })(nodes);
+
+        const treeLayout = d3.tree().size([width-margin.left-margin.right, height-margin.top-margin.bottom]);
+        treeLayout(root);
+
+        root.each(d=>{
+            d.x = d.x + margin.left;
+            d.y = d.y + margin.top;
+        });
+
+        drawGraph(nodes, links);
+    } else if(layout==="forceY") {
+        const yOffset = {};
+        let row = 0;
+        nodes.forEach(d=>{
+            if(d.country!=="Великобритания"){
+                if(!yOffset[d.country]) yOffset[d.country] = margin.top + row*50;
+                d.y = yOffset[d.country];
+                row++;
+            }
+        });
+        nodes.filter(d=>d.country==="Великобритания").forEach(d=>d.y=yCenter);
+
+        const simulation = d3.forceSimulation(nodes)
+            .force("link", d3.forceLink(links).id(d=>d.id).distance(linkDistance))
+            .force("x", d3.forceX(d=>xScale(d.year)).strength(1))
+            .force("y", d3.forceY(d=>d.y).strength(1))
+            .stop();
+        for(let i=0;i<300;i++) simulation.tick();
+        drawGraph(nodes, links);
+    }
+  }
+  
+  links.forEach(l => {
+    if (["separation","annexation","independence","dominion"].includes(l.relation)) {
+        l.target.x = l.source.x;   // фиксируем координаты цели
+        l.target.y = l.source.y;
+    }
+});
+
+  function drawGraph(nodes, links){
+      svg.selectAll(".link")
+         .data(links)
+         .join("line")
+         .attr("class","link")
+         .attr("x1",d=>d.relation==="separation"||d.relation==="annexation" ? d.source.x : d.source.x)
+         .attr("y1",d=>d.source.y)
+        //  .attr("x2",d=>d.relation==="separation"||d.relation==="annexation" ? d.source.x : d.target.x)
+        //  .attr("y2",d=>d.target.y)
+         .attr("x2", d => d.target.x)
+          .attr("y2", d => d.target.y)
+
+         .attr("stroke-width", d=> d.relation==="continuation"?2:3)
+         .attr("stroke", d=>{
+             if(d.relation==="continuation") return "#999";
+             if(d.relation==="separation") return "red";
+             if(d.relation==="annexation") return "blue";
+             if(d.relation==="dominion") return "orange";
+             return "#999";
+         });
+
+      const g = svg.selectAll(".node")
+        .data(nodes)
+        .join("g")
+        .attr("class","node")
+        .attr("transform", d=>`translate(${d.x},${d.y})`);
+
+      g.append("circle")
+       .attr("r",7)
+       .attr("fill",d=>{
+           if(d.type==="formation") return "green";
+           if(d.type==="continuation") return "gray";
+           if(d.type==="independence") return "red";
+           if(d.type==="annexation") return "blue";
+           if(d.type==="dominion") return "orange";
+           return "black";
+       })
+       .on("mouseover",(event,d)=>{
+           tooltip.style("display","block")
+                  .style("left",(event.pageX+10)+"px")
+                  .style("top",(event.pageY-20)+"px")
+                  .html(`<strong>${d.label}</strong><br>Страна: ${d.country}<br>Год: ${d.year}<br>Тип: ${d.type}`);
+       })
+       .on("mouseout",()=>tooltip.style("display","none"));
+
+      g.append("text")
+       .attr("class","label")
+       .attr("x",10)
+       .attr("y", d => d.country==="Великобритания" ? -12 : 12)
+       .text(d => d.country);
+  }
+
+  updateLayout();
+});
+</script>
+</body>
+</html>

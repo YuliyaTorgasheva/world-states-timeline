@@ -1,0 +1,17 @@
+source,target,relation
+UK-1707,UK-1776,continuation
+UK-1776,UK-1858,continuation
+UK-1858,UK-1867,continuation
+UK-1867,UK-1901,continuation
+UK-1901,UK-1910,continuation
+UK-1910,UK-2025,continuation
+UK-1776,US-1776,independence
+UK-1858,IN-1858,annexation
+IN-1858,IN-1947,independence
+UK-1867,CA-1867,dominion
+CA-1867,CA-1931,independence
+UK-1901,AU-1901,dominion
+AU-1901,AU-1942,independence
+UK-1910,ZA-1910,dominion
+ZA-1910,ZA-1961,independence
+IN-1600,IN-1858,continuation
